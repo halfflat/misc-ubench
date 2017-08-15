@@ -1,2 +1,2 @@
 # misc-ubench
-Miscellaneous micro benchmarks
+Miscellaneous micro-benchmarks.
