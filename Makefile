@@ -1,16 +1,17 @@
 .PHONY: clean all
 .SECONDARY:
 
+benches:=comment-regex round-up small-vec-search wrong-stride io-to-str min-interval
+
 topdir:=$(dir $(realpath $(lastword $(MAKEFILE_LIST))))
 srcdir:=$(topdir)
 gbench_top:=$(topdir)gbench
 
 OPTFLAGS?=-O3 -march=native
 CXXFLAGS+=$(OPTFLAGS) -MMD -MP -std=c++14 -g -pthread
-CPPFLAGS+=-I $(srcdir) -isystem $(gbench_top)/include
-LDLIBS+=-lbenchmark
+CPPFLAGS+=-isystem $(gbench_top)/include
 
-all:: qappend
+all:: $(benches)
 
 define cxx-compile
 $(CXX) $(CXXFLAGS) $(CPPFLAGS) -o $@ -c $<
@@ -20,40 +21,50 @@ define cxx-link
 $(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 endef
 
+# Arguments: name source-directory
+define obj_template
+$(1)_sources:=$$(wildcard $(2)/*.cc)
+$(1)_objects:=$$(patsubst %.cc,o/$(1)/%.o,$$(notdir $$($(1)_sources)))
+$(1)_depends:=$$(patsubst %.cc,o/$(1)/%.d,$$(notdir $$($(1)_sources)))
+clean_objs+=$$($(1)_objects)
+clean_deps+=$$($(1)_depends)
+clean_dirs+=o/$(1)
+-include $$($(1)_depends)
+o/$(1)/%.o: $(2)/%.cc
+	@mkdir -p o/$(1)
+	$$(cxx-compile)
+endef
+
 # gbenchmark:
 
-gbench_sources:=$(wildcard $(gbench_top)/src/*.cc)
-gbench_objects:=$(patsubst %.cc,o/gbench/%.o,$(notdir $(gbench_sources)))
-gbench_depends:=$(patsubst %.cc,o/gbench/%.d,$(notdir $(gbench_sources)))
-
--include $(gbench_depends)
-
+$(eval $(call obj_template,gbench,$(gbench_top)/src))
 o/gbench/%.o: CPPFLAGS+=-DHAVE_STD_REGEX -DNDEBUG
-o/gbench/%.o: $(gbench_top)/src/%.cc
-	@mkdir -p o/gbench
-	$(cxx-compile)
 
 libbenchmark.a: $(gbench_objects)
 	$(AR) r $@ $^
 
-# qappend:
 
-qappend_sources:=$(srcdir)/qbench/qappend.cc
-qappend_objects:=$(patsubst %.cc,o/qappend/%.o,$(notdir $(qappend_sources)))
-qappend_depends:=$(patsubst %.cc,o/qappend/%.d,$(notdir $(qappend_sources)))
+# All benchmarks:
 
--include $(qappend_depends)
+#wrong-stride: CPPFLAGS+=-DPAD
+wrong-stride: CPPFLAGS+=-DEXPENSIVE
+wrong-stride: CXXFLAGS+=-fopenmp
 
-o/qappend/%.o: $(srcdir)/qappend/%.cc
-	mkdir -p o/qappend
-	$(cxx-compile)
+define bench_template
+$$(eval $$(call obj_template,$(1),$$(srcdir)/$(1)))
+$(1): libbenchmark.a
+$(1): $$($(1)_objects) libbenchmark.a
+	$$(cxx-link)
+endef
 
-qappend: $(qappend_objects) libbenchmark.a
-	$(cxx-link)
+$(foreach b,$(benches),$(eval $(call bench_template,$(b))))
+
+
+# Clean up:
 
 clean:
-	rm -f $(qappend_objects) $(gbench_objects)
+	rm -f $(clean_objs)
 
 realclean: clean
-	rm -f qappend libbenchmark.a $(qappend_depends) $(gbench_depends)
-	for dir in o/qappend o/gbench o; do [ -d "$$dir" ] && rmdir "$$dir"; done
+	rm -f $(benches) libbenchmark.a $(clean_deps)
+	for dir in $(clean_dirs); do if [ -d "$$dir" ]; then rmdir "$$dir"; fi; done
