@@ -10,6 +10,7 @@
 // Problem: partially order a set S of non-empty half-open intervals by
 // [a,b) < [c,d] iff b ≤ c. Find the minimal elements of S.
 
+// Online algorithm: heap based.
 template <typename T>
 struct min_interval_heap {
     aug_max_heap<T> heap;
@@ -29,6 +30,7 @@ struct min_interval_heap {
     std::size_t size() const { return heap.size(); }
 };
 
+// Online algorithm: vector based.
 template <typename T>
 struct min_interval_vector {
     std::vector<interval<T>> items, temp;
@@ -53,6 +55,45 @@ struct min_interval_vector {
     iterator end() const { return items.end(); }
 
     std::size_t size() const { return items.size(); }
+};
+
+// Offline algorithm: apply global minimum upper bound.
+template <typename T>
+struct min_interval_offline {
+    mutable std::vector<interval<T>> candidates;
+    T upper;
+    mutable bool stale = true;
+
+    void push_back(interval<T> ab) {
+        stale = true;
+        if (candidates.empty()) {
+            upper = ab.second;
+            candidates.push_back(std::move(ab));
+        }
+        else {
+            if (ab.second<upper) upper = ab.second;
+            if (ab.first<upper) candidates.push_back(std::move(ab));
+        }
+    }
+
+    using iterator = typename std::vector<interval<T>>::const_iterator;
+    iterator begin() const { filter(); return candidates.begin(); }
+    iterator end() const { filter(); return candidates.end(); }
+
+    std::size_t size() const { filter(); return candidates.size(); }
+
+    void filter() const {
+        if (!stale) return;
+        std::size_t n = candidates.size();
+        for (std::size_t i = 0; i<n; ) {
+            if (candidates[i].first>=upper) {
+                std::swap(candidates[i], candidates[--n]);
+            }
+            else ++i;
+        }
+        candidates.resize(n);
+        stale = false;
+    }
 };
 
 template <typename Rng>
@@ -113,6 +154,17 @@ BENCHMARK_TEMPLATE(bench_min_interval, min_interval_heap<int>)
     ->Args({10000, 3000});
 
 BENCHMARK_TEMPLATE(bench_min_interval, min_interval_vector<int>)
+    ->Args({100, 1})
+    ->Args({100, 3})
+    ->Args({100, 30})
+    ->Args({1000, 1})
+    ->Args({1000, 30})
+    ->Args({1000, 300})
+    ->Args({10000, 1})
+    ->Args({10000, 300})
+    ->Args({10000, 3000});
+
+BENCHMARK_TEMPLATE(bench_min_interval, min_interval_offline<int>)
     ->Args({100, 1})
     ->Args({100, 3})
     ->Args({100, 30})
