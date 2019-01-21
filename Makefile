@@ -1,7 +1,7 @@
 .PHONY: clean all
 .SECONDARY:
 
-benches:=comment-regex round-up small-vec-search wrong-stride io-to-str min-interval
+benches:=comment-regex round-up small-vec-search wrong-stride io-to-str min-interval indirect-sum
 
 topdir:=$(dir $(realpath $(lastword $(MAKEFILE_LIST))))
 srcdir:=$(topdir)
