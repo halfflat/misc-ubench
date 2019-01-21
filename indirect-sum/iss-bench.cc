@@ -157,11 +157,16 @@ int main(int argc, char** argv) {
     double sparse = 0.1, dense = 10, very_dense = 100;
 
     for (auto& impl: impls) {
-        benchmark::RegisterBenchmark((impl.first+"/sparse").c_str(), run_benchmark, impl.second, N, sparse, false);
-        benchmark::RegisterBenchmark((impl.first+"/dense").c_str(), run_benchmark, impl.second, N, dense, false);
-        benchmark::RegisterBenchmark((impl.first+"/very_dense").c_str(), run_benchmark, impl.second, N, very_dense, false);
-        benchmark::RegisterBenchmark((impl.first+"/dense_monotonic").c_str(), run_benchmark, impl.second, N, dense, true);
-        benchmark::RegisterBenchmark((impl.first+"/very_dense_monotonic").c_str(), run_benchmark, impl.second, N, very_dense, true);
+        benchmark::RegisterBenchmark((impl.first+"/sparse").c_str(),
+           [&](auto& st) { run_benchmark(st, impl.second, N, sparse, false); });
+        benchmark::RegisterBenchmark((impl.first+"/dense").c_str(),
+           [&](auto& st) { run_benchmark(st, impl.second, N, dense, false); });
+        benchmark::RegisterBenchmark((impl.first+"/very_dense").c_str(),
+           [&](auto& st) { run_benchmark(st, impl.second, N, very_dense, false); });
+        benchmark::RegisterBenchmark((impl.first+"/dense_monotonic").c_str(),
+           [&](auto& st) { run_benchmark(st, impl.second, N, dense, true); });
+        benchmark::RegisterBenchmark((impl.first+"/very_dense_monotonic").c_str(),
+           [&](auto& st) { run_benchmark(st, impl.second, N, very_dense, true); });
     }
     benchmark::Initialize(&argc, argv);
     benchmark::RunSpecifiedBenchmarks();

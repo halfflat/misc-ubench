@@ -20,7 +20,8 @@ indirect addition; the 'scalar' test accumulates consecutive values with the sam
 to minimize the number of writes.
 
 On an Ivy Bridge system with gcc 8.2.1, the naive implementation is about 2.3x slower
-with α=100, but about 1.8x _quicker_ with α=10. I'm guessing this is the cost of missed
-branch predictions, but would have to look more closely.
+with α=100, but about 1.8x _quicker_ with α=10. With gcc 7.4.1 though, we don't see
+a big slowdown with α=10. Bears further investigation.
+
 
 
