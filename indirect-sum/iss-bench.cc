@@ -1,16 +1,67 @@
 #include <cassert>
 #include <functional>
 #include <random>
+#include <memory>
+#include <system_error>
 #include <vector>
+
+#include <iostream>
 
 #include <immintrin.h>
 
 #include "benchmark/benchmark.h"
 
+// Custom allocator for aligned and padded allocation for SIMD implementations.
+// (Adapted from arbor source.)
+
+template <typename T = void>
+struct padded_allocator {
+    static constexpr std::size_t alignment_ = 64;
+
+    using value_type = T;
+    using pointer = T*;
+
+    padded_allocator() noexcept {}
+
+    template <typename U>
+    padded_allocator(const padded_allocator<U>& b) noexcept {}
+
+    pointer allocate(std::size_t n) {
+        if (n>std::size_t(-1)/sizeof(T)) {
+            throw std::bad_alloc();
+        }
+
+        void* mem = nullptr;
+        std::size_t size = round_up(n*sizeof(T), alignment_);
+        std::size_t pm_align = std::max(alignment_, sizeof(void*));
+
+        if (auto err = posix_memalign(&mem, pm_align, size)) {
+            throw std::system_error(err, std::generic_category(), "posix_memalign");
+        }
+        return static_cast<pointer>(mem);
+    }
+
+    void deallocate(pointer p, std::size_t n) {
+        std::free(p);
+    }
+
+    bool operator==(const padded_allocator& a) const { return true; }
+    bool operator!=(const padded_allocator& a) const { return false; }
+
+private:
+    static std::size_t round_up(std::size_t v, std::size_t b) {
+         std::size_t m = v%b;
+         return v-m+(m? b: 0);
+    }
+};
+
+template <typename T>
+using padded_vector = std::vector<T, padded_allocator<T>>;
+
 struct indirect_example {
-    std::vector<double> data;
-    std::vector<double> inc;
-    std::vector<int> offset;
+    padded_vector<double> data;
+    padded_vector<double> inc;
+    padded_vector<int> offset;
 
     indirect_example(std::size_t datasz, std::size_t incsz):
         data(datasz), inc(incsz), offset(incsz) {}
@@ -97,28 +148,42 @@ void scalar_impl(indirect_example& ex) {
 
 #if defined(__AVX512F__)
 inline void addi_avx512(double* p, __m512i o, __m512d a) {
-    __m512i conf = _mm512_conflict_epi32(o);
-    __mmask16 wmask = _mm512_cmpeq_epi32_mask(conf, _mm512_setzero_epi32());
+    __m512i confv = _mm512_conflict_epi32(o);
 
-    auto psum = [&](unsigned j) {
-        return _mm512_maskz_broadcastsd_pd(_mm512_int2mask(conf[j]), _mm_set1_pd(a[j]));
-    };
+    int conf[8];
+    _mm256_storeu_si256((__m256i*)conf, _mm512_castsi512_si256(confv));
+
+    double aa[8];
+    _mm512_storeu_pd((__m512d*)aa, a);
+
+    __mmask16 wmask = _mm512_cmpeq_epi32_mask(confv, _mm512_setzero_epi32());
 
     __m512d x = _mm512_i32gather_pd(_mm512_castsi512_si256(o), (const void*)p, sizeof(double));
 
+    __m512d p01 = _mm512_add_pd(
+                        _mm512_maskz_broadcastsd_pd(_mm512_int2mask(conf[0]), _mm_set1_pd(aa[0])),
+                        _mm512_maskz_broadcastsd_pd(_mm512_int2mask(conf[1]), _mm_set1_pd(aa[1])));
+
+    __m512d p23 = _mm512_add_pd(
+                        _mm512_maskz_broadcastsd_pd(_mm512_int2mask(conf[2]), _mm_set1_pd(aa[2])),
+                        _mm512_maskz_broadcastsd_pd(_mm512_int2mask(conf[3]), _mm_set1_pd(aa[3])));
+
+    __m512d p45 = _mm512_add_pd(
+                        _mm512_maskz_broadcastsd_pd(_mm512_int2mask(conf[4]), _mm_set1_pd(aa[4])),
+                        _mm512_maskz_broadcastsd_pd(_mm512_int2mask(conf[5]), _mm_set1_pd(aa[5])));
+
+    __m512d p67 = _mm512_add_pd(
+                        _mm512_maskz_broadcastsd_pd(_mm512_int2mask(conf[6]), _mm_set1_pd(aa[6])),
+                        _mm512_maskz_broadcastsd_pd(_mm512_int2mask(conf[7]), _mm_set1_pd(aa[7])));
+
     x = _mm512_add_pd(
-        _mm512_add_pd(x, a),
-        _mm512_add_pd(
+            _mm512_add_pd(x, a),
             _mm512_add_pd(
-                _mm512_add_pd(psum(0), psum(1)),
-                _mm512_add_pd(psum(2), psum(3))
-            ),
-            _mm512_add_pd(
-                _mm512_add_pd(psum(4), psum(5)),
-                _mm512_add_pd(psum(6), psum(7))
+                _mm512_add_pd(p01, p23),
+                _mm512_add_pd(p45, p67)
             )
-        )
-    );
+        );
+
     _mm512_mask_i32scatter_pd((void*)p, wmask, _mm512_castsi512_si256(o), x, sizeof(double));
 }
 
@@ -133,7 +198,7 @@ void avx512_impl(indirect_example& ex) {
     __mmask16 lo = _cvtu32_mask16(0xffu);
     for (std::size_t i = 0; i<incsz; i+=8) {
         __m512d a = _mm512_load_pd((void*)inc);
-        __m512i o = _mm512_maskz_load_epi32(lo, (void*)off);
+        __m512i o = _mm512_maskz_loadu_epi32(lo, (void*)off);
 
         addi_avx512(p, o, a);
 
