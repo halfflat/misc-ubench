@@ -26,4 +26,8 @@ a big slowdown with α=10. Bears further investigation.
 Performance off the AVX512 implementation on a Sandybridge-X with gcc 7.2.0 is terrible,
 although it is uniformly terrible across monotonic and non-monotonic tests.
 
+## More notes
+
+Current test parameters are broadly silly. Note to self: come back to this with something
+realistic and/or useful!
 
