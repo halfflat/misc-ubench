@@ -1,7 +1,11 @@
+#include <algorithm>
 #include <cassert>
 #include <functional>
 #include <random>
 #include <vector>
+
+#include <cstdio>
+using std::printf;
 
 #include "benchmark/benchmark.h"
 
@@ -49,7 +53,7 @@ indirect_example generate_example(std::size_t N, int min_width, int max_width, R
     return ex;
 }
 
-using indirect_add_fn = std::function<void (indirect_example&, int)>;
+using indirect_add_fn = std::function<float (indirect_example&, int)>;
 
 void check_indirect_add(indirect_example ex, indirect_add_fn op) {
     // note: reordering of addition may make sum comparison inexact.
@@ -61,22 +65,25 @@ void check_indirect_add(indirect_example ex, indirect_add_fn op) {
 
     assert(ex.data.size()==ex_check.data.size());
     for (std::size_t i = 0; i<ex.data.size(); ++i) {
+        //printf("i: %02zu; check: %f; ex: %f\n", i, ex_check.data[i], ex.data[i]);
         assert(std::abs(ex.data[i]-ex_check.data[i])<=epsilon);
     }
 }
 
 void run_benchmark(benchmark::State& state, indirect_add_fn op, std::size_t N, int wl, int wh) {
+    constexpr int reps = 5;
     std::minstd_rand R;
 
     auto ex = generate_example(N, wl, wh, R);
     check_indirect_add(ex, op);
 
     for (auto _: state) {
-        op(ex, 1000);
+        float t = op(ex, reps);
+        if (t) state.SetIterationTime(t);
     }
 }
 
-void naive_reduce(indirect_example& ex, int reps) {
+float naive_reduce(indirect_example& ex, int reps) {
     std::size_t incsz = ex.inc.size();
 
     for (int i = 0; i<reps; ++i) {
@@ -84,9 +91,10 @@ void naive_reduce(indirect_example& ex, int reps) {
             ex.data[ex.offset[i]] += ex.inc[i];
         }
     }
+    return 0;
 }
 
-void scalar_reduce(indirect_example& ex, int reps) {
+float scalar_reduce(indirect_example& ex, int reps) {
     std::size_t incsz = ex.inc.size();
 
     double* p = ex.data.data();
@@ -105,36 +113,65 @@ void scalar_reduce(indirect_example& ex, int reps) {
         acc += a[incsz-1];
         p[o[incsz-1]] += acc;
     }
+    return 0;
 }
 
-extern void arbor_cuda_reduce_impl(std::size_t N, double* p, const double* v, const int* index, int reps);
+extern float arbor_cuda_reduce_impl(std::size_t N, double* p, const double* v, const int* index, int reps);
 
-void arbor_cuda_reduce(indirect_example& ex, int reps) {
-    arbor_cuda_reduce_impl(ex.inc.size(), ex.data.data(), ex.inc.data(), ex.offset.data(), reps);
+float arbor_cuda_reduce(indirect_example& ex, int reps) {
+    return arbor_cuda_reduce_impl(ex.inc.size(), ex.data.data(), ex.inc.data(), ex.offset.data(), reps);
 }
 
+extern float expr1_cuda_reduce_impl(std::size_t N, double* p, const double* v, const int* index, int reps);
+
+float expr1_cuda_reduce(indirect_example& ex, int reps) {
+    return expr1_cuda_reduce_impl(ex.inc.size(), ex.data.data(), ex.inc.data(), ex.offset.data(), reps);
+}
+
+extern float expr2_cuda_reduce_impl(std::size_t N, double* p, const double* v, const int* index, int reps);
+
+float expr2_cuda_reduce(indirect_example& ex, int reps) {
+    return expr2_cuda_reduce_impl(ex.inc.size(), ex.data.data(), ex.inc.data(), ex.offset.data(), reps);
+}
 
 int main(int argc, char** argv) {
-    std::vector<std::pair<std::string, indirect_add_fn>> impls = {
-        {"naive", naive_reduce},
-        {"scalar", scalar_reduce},
-        {"arbor_cuda", arbor_cuda_reduce}
+    struct impl {
+        std::string name;
+        indirect_add_fn fn;
+        bool manual_timing;
     };
 
-    std::size_t N = 10247;
+    impl impls[] = {
+        {"naive", naive_reduce, false},
+        {"scalar", scalar_reduce, false},
+        {"arbor_cuda", arbor_cuda_reduce, true},
+        {"expr1_cuda", expr1_cuda_reduce, true},
+        {"expr2_cuda", expr2_cuda_reduce, true}
+    };
+
+    std::size_t N = 1024007;
     double sparse = 0.1, dense = 10, very_dense = 100;
 
     for (auto& impl: impls) {
-        benchmark::RegisterBenchmark((impl.first+"/constant").c_str(),
-           [&](auto& st) { run_benchmark(st, impl.second, N, N, N); });
-        benchmark::RegisterBenchmark((impl.first+"/distinct").c_str(),
-           [&](auto& st) { run_benchmark(st, impl.second, N, 1, 1); });
-        benchmark::RegisterBenchmark((impl.first+"/w1_5").c_str(),
-           [&](auto& st) { run_benchmark(st, impl.second, N, 1, 5); });
-        benchmark::RegisterBenchmark((impl.first+"/w15_60").c_str(),
-           [&](auto& st) { run_benchmark(st, impl.second, N, 15, 60); });
-        benchmark::RegisterBenchmark((impl.first+"/w123").c_str(),
-           [&](auto& st) { run_benchmark(st, impl.second, N, 123, 123); });
+        std::vector<benchmark::internal::Benchmark*> benches;
+
+        benches.push_back(benchmark::RegisterBenchmark((impl.name+"/constant").c_str(),
+           [&](auto& st) { run_benchmark(st, impl.fn, N, N, N); }));
+        benches.push_back(benchmark::RegisterBenchmark((impl.name+"/distinct").c_str(),
+           [&](auto& st) { run_benchmark(st, impl.fn, N, 1, 1); }));
+        benches.push_back(benchmark::RegisterBenchmark((impl.name+"/w1_5").c_str(),
+           [&](auto& st) { run_benchmark(st, impl.fn, N, 1, 5); }));
+        benches.push_back(benchmark::RegisterBenchmark((impl.name+"/w15_60").c_str(),
+           [&](auto& st) { run_benchmark(st, impl.fn, N, 15, 60); }));
+        benches.push_back(benchmark::RegisterBenchmark((impl.name+"/w123").c_str(),
+           [&](auto& st) { run_benchmark(st, impl.fn, N, 123, 123); }));
+
+        for (auto& b: benches) {
+            if (impl.manual_timing) b->UseManualTime();
+            b->ComputeStatistics("min", [](const std::vector<double>& v) -> double {
+                return *(std::min_element(std::begin(v), std::end(v)));
+            });
+        }
     }
     benchmark::Initialize(&argc, argv);
     benchmark::RunSpecifiedBenchmarks();
