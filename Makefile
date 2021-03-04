@@ -1,8 +1,8 @@
 .PHONY: clean all
 .SECONDARY:
 
-benches:=comment-regex round-up small-vec-search wrong-stride io-to-str min-interval indirect-sum
-cu_benches:=cuda-reduce-by-key
+benches:=comment-regex round-up small-vec-search wrong-stride io-to-str min-interval indirect-sum isqrt
+#cu_benches:=cuda-reduce-by-key
 
 topdir:=$(dir $(realpath $(lastword $(MAKEFILE_LIST))))
 srcdir:=$(topdir)
